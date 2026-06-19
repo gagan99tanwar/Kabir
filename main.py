@@ -4,7 +4,7 @@ import sys
 import random
 import asyncio
 import logging
-import sqlite3
+import aiosqlite  # Replacing standard sqlite3 for true async performance
 import aiohttp
 import signal
 import traceback
@@ -30,11 +30,11 @@ try:
 
     if not STRING_SESSION or not API_ID or not API_HASH:
         print("❌ Critical Telethon Credentials Missing! Exiting...")
-        exit(1)
+        sys.exit(1)
     API_ID = int(API_ID)
 except Exception as e:
     print(f"❌ Startup Variable Parsing Crash: {e}")
-    exit(1)
+    sys.exit(1)
 
 GEMINI_KEYS = [os.getenv("GEMINI_KEY_1"), os.getenv("GEMINI_KEY_2"), os.getenv("GEMINI_KEY")]
 GEMINI_KEYS = [k for k in GEMINI_KEYS if k]  
@@ -51,129 +51,133 @@ USER_COOLDOWN = {}
 DB_LOCK = asyncio.Lock()
 DB_NAME = "kabir_god_bot.db"
 
-def get_db_connection():
-    conn = sqlite3.connect(DB_NAME, timeout=10, check_same_thread=False)
-    conn.execute("PRAGMA journal_mode=WAL;")  
-    return conn
-
+# async sqlite init
 async def init_db():
     async with DB_LOCK:
-        with get_db_connection() as conn:
-            cursor = conn.cursor()
-            cursor.execute('''CREATE TABLE IF NOT EXISTS users (user_id INTEGER PRIMARY KEY, username TEXT, nickname TEXT DEFAULT "", friend_level INTEGER DEFAULT 0, trust_score INTEGER DEFAULT 50, enemy_score INTEGER DEFAULT 0, likes TEXT DEFAULT "", dislikes TEXT DEFAULT "", favorite_topics TEXT DEFAULT "", last_curiosity TEXT DEFAULT "", last_topic TEXT DEFAULT "", current_mood TEXT DEFAULT "normal")''')
-            cursor.execute('''CREATE TABLE IF NOT EXISTS groups (chat_id INTEGER PRIMARY KEY, group_type TEXT DEFAULT "friends group", group_mood TEXT DEFAULT "excited")''')
-            cursor.execute('''CREATE TABLE IF NOT EXISTS chat_history (id INTEGER PRIMARY KEY AUTOINCREMENT, chat_id INTEGER, user_id INTEGER, role TEXT, text TEXT, timestamp DATETIME DEFAULT CURRENT_TIMESTAMP)''')
-            cursor.execute('''CREATE TABLE IF NOT EXISTS last_replies (chat_id INTEGER PRIMARY KEY, reply_1 TEXT DEFAULT "", reply_2 TEXT DEFAULT "")''')
-            cursor.execute("PRAGMA table_info(users)")
-            columns = [col[1] for col in cursor.fetchall()]
+        async with aiosqlite.connect(DB_NAME, timeout=10) as db:
+            await db.execute("PRAGMA journal_mode=WAL;")  
+            await db.execute('''CREATE TABLE IF NOT EXISTS users (user_id INTEGER PRIMARY KEY, username TEXT, nickname TEXT DEFAULT "", friend_level INTEGER DEFAULT 0, trust_score INTEGER DEFAULT 50, enemy_score INTEGER DEFAULT 0, likes TEXT DEFAULT "", dislikes TEXT DEFAULT "", favorite_topics TEXT DEFAULT "", last_curiosity TEXT DEFAULT "", last_topic TEXT DEFAULT "", current_mood TEXT DEFAULT "normal")''')
+            await db.execute('''CREATE TABLE IF NOT EXISTS groups (chat_id INTEGER PRIMARY KEY, group_type TEXT DEFAULT "friends group", group_mood TEXT DEFAULT "excited")''')
+            await db.execute('''CREATE TABLE IF NOT EXISTS chat_history (id INTEGER PRIMARY KEY AUTOINCREMENT, chat_id INTEGER, user_id INTEGER, role TEXT, text TEXT, timestamp DATETIME DEFAULT CURRENT_TIMESTAMP)''')
+            await db.execute('''CREATE TABLE IF NOT EXISTS last_replies (chat_id INTEGER PRIMARY KEY, reply_1 TEXT DEFAULT "", reply_2 TEXT DEFAULT "")''')
+            
+            cursor = await db.execute("PRAGMA table_info(users)")
+            columns = [col[1] for col in await cursor.fetchall()]
             upgrades = {"last_curiosity": "TEXT DEFAULT ''", "last_topic": "TEXT DEFAULT ''", "current_mood": "TEXT DEFAULT 'normal'"}
             for col_name, col_type in upgrades.items():
                 if col_name not in columns:
-                    cursor.execute(f"ALTER TABLE users ADD COLUMN {col_name} {col_type}")
-            conn.commit()
+                    await db.execute(f"ALTER TABLE users ADD COLUMN {col_name} {col_type}")
+            await db.commit()
 
 async def get_user(user_id, username=""):
     async with DB_LOCK:
-        with get_db_connection() as conn:
-            cursor = conn.cursor()
-            cursor.execute("SELECT * FROM users WHERE user_id = ?", (user_id,))
-            row = cursor.fetchone()
+        async with aiosqlite.connect(DB_NAME, timeout=10) as db:
+            cursor = await db.execute("SELECT * FROM users WHERE user_id = ?", (user_id,))
+            row = await cursor.fetchone()
             if not row:  
-                cursor.execute('''INSERT INTO users (user_id, username, trust_score, current_mood) VALUES (?, ?, 50, 'normal')''', (user_id, username))  
-                conn.commit()  
-                cursor.execute("SELECT * FROM users WHERE user_id = ?", (user_id,))
-                row = cursor.fetchone()  
+                await db.execute('''INSERT INTO users (user_id, username, trust_score, current_mood) VALUES (?, ?, 50, 'normal')''', (user_id, username))  
+                await db.commit()  
+                cursor = await db.execute("SELECT * FROM users WHERE user_id = ?", (user_id,))
+                row = await cursor.fetchone()  
+    
+    if not row:
+        return {"user_id": user_id, "username": username, "nickname": "", "friend_level": 0, "trust_score": 50, "enemy_score": 0, "likes": "", "dislikes": "", "favorite_topics": "", "last_curiosity": "", "last_topic": "", "current_mood": "normal"}
+        
     return {"user_id": row[0], "username": row[1], "nickname": row[2], "friend_level": row[3], "trust_score": row[4], "enemy_score": row[5], "likes": row[6], "dislikes": row[7], "favorite_topics": row[8], "last_curiosity": row[9], "last_topic": row[10], "current_mood": row[11]}
 
 async def update_user_stats(user_id, updates):
     if not updates: return
     async with DB_LOCK:
-        with get_db_connection() as conn:
-            cursor = conn.cursor()
+        async with aiosqlite.connect(DB_NAME, timeout=10) as db:
             for key, value in updates.items():
-                if key in ["nickname", "likes", "dislikes", "enemy_score", "friend_level", "current_mood", "last_curiosity", "last_topic"]:
-                    cursor.execute(f"UPDATE users SET {key} = ? WHERE user_id = ?", (value, user_id))
-            conn.commit()
+                # Fix: Added trust_score so it doesn't get silently ignored
+                if key in ["nickname", "likes", "dislikes", "enemy_score", "friend_level", "current_mood", "last_curiosity", "last_topic", "trust_score"]:
+                    await db.execute(f"UPDATE users SET {key} = ? WHERE user_id = ?", (value, user_id))
+            await db.commit()
 
 async def get_group_data(chat_id):
     async with DB_LOCK:
-        with get_db_connection() as conn:
-            cursor = conn.cursor()
-            cursor.execute("SELECT group_type, group_mood FROM groups WHERE chat_id = ?", (chat_id,))
-            row = cursor.fetchone()
+        async with aiosqlite.connect(DB_NAME, timeout=10) as db:
+            cursor = await db.execute("SELECT group_type, group_mood FROM groups WHERE chat_id = ?", (chat_id,))
+            row = await cursor.fetchone()
             if not row:
                 g_type = random.choice(["friends group", "meme group", "serious group"])
                 g_mood = random.choice(["excited", "chill", "sarcastic"])
-                cursor.execute("INSERT INTO groups (chat_id, group_type, group_mood) VALUES (?, ?, ?)", (chat_id, g_type, g_mood))
-                conn.commit()
+                await db.execute("INSERT INTO groups (chat_id, group_type, group_mood) VALUES (?, ?, ?)", (chat_id, g_type, g_mood))
+                await db.commit()
                 return {"group_type": g_type, "group_mood": g_mood}
     return {"group_type": row[0], "group_mood": row[1]}
 
 async def save_chat_history(chat_id, user_id, role, text):
     async with DB_LOCK:
-        with get_db_connection() as conn:
-            cursor = conn.cursor()
-            cursor.execute('INSERT INTO chat_history (chat_id, user_id, role, text) VALUES (?, ?, ?, ?)', (chat_id, user_id, role, text))
+        async with aiosqlite.connect(DB_NAME, timeout=10) as db:
+            await db.execute('INSERT INTO chat_history (chat_id, user_id, role, text) VALUES (?, ?, ?, ?)', (chat_id, user_id, role, text))
             if random.random() < 0.10:
-                cursor.execute('''DELETE FROM chat_history WHERE chat_id = ? AND id NOT IN (SELECT id FROM chat_history WHERE chat_id = ? ORDER BY id DESC LIMIT 30)''', (chat_id, chat_id))  
-            conn.commit()
+                # Fix: Safe SQLite cleanup approach using LIMIT offset safely
+                await db.execute('''DELETE FROM chat_history WHERE chat_id = ? AND id <= (SELECT id FROM chat_history WHERE chat_id = ? ORDER BY id DESC LIMIT 1 OFFSET 30)''', (chat_id, chat_id))  
+            await db.commit()
 
 async def get_context(chat_id, limit=10):
     async with DB_LOCK:
-        with get_db_connection() as conn:
-            cursor = conn.cursor()
-            cursor.execute('SELECT role, text FROM chat_history WHERE chat_id = ? ORDER BY id DESC LIMIT ?', (chat_id, limit))
-            rows = cursor.fetchall()
+        async with aiosqlite.connect(DB_NAME, timeout=10) as db:
+            cursor = await db.execute('SELECT role, text FROM chat_history WHERE chat_id = ? ORDER BY id DESC LIMIT ?', (chat_id, limit))
+            rows = await cursor.fetchall()
     rows.reverse()
-    return "\n".join([f"{r}: {t}" for r, t in rows])
+    return "\n".join([f"{r[0]}: {r[1]}" for r in rows])
 
 async def check_repetition(chat_id, new_reply):
     if not new_reply: return False
     async with DB_LOCK:
-        with get_db_connection() as conn:
-            cursor = conn.cursor()
-            cursor.execute("SELECT reply_1, reply_2 FROM last_replies WHERE chat_id = ?", (chat_id,))
-            row = cursor.fetchone()
+        async with aiosqlite.connect(DB_NAME, timeout=10) as db:
+            cursor = await db.execute("SELECT reply_1, reply_2 FROM last_replies WHERE chat_id = ?", (chat_id,))
+            row = await cursor.fetchone()
             if not row:  
-                cursor.execute("INSERT INTO last_replies (chat_id, reply_1, reply_2) VALUES (?, ?, '')", (chat_id, new_reply))  
-                conn.commit()  
+                await db.execute("INSERT INTO last_replies (chat_id, reply_1, reply_2) VALUES (?, ?, '')", (chat_id, new_reply))  
+                await db.commit()  
                 return False  
             r1, r2 = row[0] or "", row[1] or ""  
             if new_reply.strip().lower() in [r1.strip().lower(), r2.strip().lower()]:  
                 return True  
-            cursor.execute("UPDATE last_replies SET reply_2 = ?, reply_1 = ? WHERE chat_id = ?", (r1, new_reply, chat_id))  
-            conn.commit()  
+            await db.execute("UPDATE last_replies SET reply_2 = ?, reply_1 = ? WHERE chat_id = ?", (r1, new_reply, chat_id))  
+            await db.commit()  
     return False
 
 async def process_dynamic_learning(text, user_data):
     text_lower = text.lower().strip()
     updates = {}
     name_patterns = [r"mera\s+naam\s+([a-zA-Z0-9\s]+)\s+hai", r"mujhe\s+([a-zA-Z0-9\s]+)\s+bolo", r"call\s+me\s+([a-zA-Z0-9\s]+)"]  
+    
     for pattern in name_patterns:  
         match = re.search(pattern, text_lower)  
         if match:
             updates["nickname"] = match.group(1).title()  
             break  
+            
     if "pasand hai" in text_lower or "love" in text_lower:  
-        cleaned_like = text_lower.replace("mujhe", "").replace("pasand hai", "").strip()  
-        if cleaned_like and cleaned_like not in user_data["likes"]:  
+        cleaned_like = text_lower.replace("mujhe", "").replace("pasand hai", "").replace("love", "").strip()  
+        # Fix: Split into list to avoid substring 'cri' matching 'cricket'
+        existing_likes = [l.strip().lower() for l in user_data["likes"].split(",") if l.strip()]
+        if cleaned_like and cleaned_like not in existing_likes:  
             updates["likes"] = f"{user_data['likes']}, {cleaned_like}".strip(", ")  
             
     enemy_triggers = ["stfu", "chup reh", "lodu", "gandu", "bkl", "shut up"]  
     friendly_triggers = ["bhai h tu", "love you", "mast bot", "op bhae"]  
     triggered = False
+    
     for word in enemy_triggers:  
         if word in text_lower:  
             updates["enemy_score"] = user_data["enemy_score"] + 2  
             updates["current_mood"] = "angry"  
             triggered = True
             break  
+            
     for word in friendly_triggers:  
         if word in text_lower:  
             updates["friend_level"] = min(user_data["friend_level"] + 2, 100)  
             updates["current_mood"] = "excited"  
             triggered = True
             break  
+            
     if not updates and not triggered: return user_data  
     if "friend_level" not in updates and triggered is False:  
         updates["friend_level"] = min(user_data["friend_level"] + 1, 100)  
@@ -189,6 +193,7 @@ def get_next_key():
     current_key_index = (current_key_index + 1) % len(GEMINI_KEYS)
     return key
 
+# === STRICT 1 REQUEST PER CALL AI ROUTER WITH SAFE SWAP DELAY ===
 async def ask_kabir_ai(prompt):
     global current_key_index, GLOBAL_SESSION
     if not GEMINI_KEYS: 
@@ -202,7 +207,6 @@ async def ask_kabir_ai(prompt):
         if not api_key: continue
         url = f"{GEMINI_URL}?key={api_key}"
         try:
-            if attempt > 0: await asyncio.sleep(0.5 * attempt)
             strict_timeout = aiohttp.ClientTimeout(total=12)
             async with GLOBAL_SESSION.post(url, json={"contents": [{"parts": [{"text": prompt}]}]}, timeout=strict_timeout) as resp:
                 print(f"=== [GEMINI HTTP CHECK] ATTEMPT {attempt+1} ===")
@@ -210,24 +214,28 @@ async def ask_kabir_ai(prompt):
                 
                 if resp.status == 429:
                     print("⚠️ RATE LIMITED ON KEY:", api_key[:10])
+                    await asyncio.sleep(0.3)  
                     continue
                 if resp.status in [400, 401, 403]:
-                    print("❌ BAD/EXPIRED KEY OR FORMAT ON KEY:", api_key[:10])
-                    print("ERROR REASON:", await resp.text())
+                    print("❌ BAD/EXPIRED KEY ON KEY:", api_key[:10])
+                    await asyncio.sleep(0.3)
                     continue
                 if resp.status != 200:
-                    print("❌ UNKNOWN API ERROR ENCOUNTERED:", await resp.text())
+                    await asyncio.sleep(0.3)
                     continue
 
                 data = await resp.json()
-                print("GEMINI RESPONSE:", data)
+                # Fix: Check safely for Gemini safety blocks & empty keys avoiding KeyError
                 if not data or not data.get("candidates"):
-                    print("⚠️ NO CANDIDATES PAYLOAD FOUND (SAFETY BLOCK)")
+                    print("⚠️ Safety blocked or empty response by Gemini.")
                     continue
                 try:
-                    return data["candidates"][0]["content"]["parts"][0]["text"].strip()
-                except Exception as parse_err:
-                    print(f"❌ STRUCTURAL PARSING FAILURE: {parse_err}")
+                    parts = data["candidates"][0].get("content", {}).get("parts", [])
+                    if not parts:
+                        continue
+                    return parts[0]["text"].strip()
+                except (KeyError, IndexError) as e:
+                    logger.error(f"Gemini payload extraction error: {e}")
                     continue
         except Exception as e:
             logger.error(f"Gemini Router failure: {e}")
@@ -286,7 +294,8 @@ async def handle_new_message(event):
 
         user_id = event.sender_id
         if user_id:
-            if user_id in USER_COOLDOWN and (now - USER_COOLDOWN[user_id]) < 3.0: return  
+            # Fix: Cooldown reduced from 3.0 to 1.0 seconds so normal fast chats aren't ignored
+            if user_id in USER_COOLDOWN and (now - USER_COOLDOWN[user_id]) < 1.0: return  
             USER_COOLDOWN[user_id] = now
 
         is_private = event.is_private  
@@ -341,13 +350,15 @@ async def handle_new_message(event):
                 await save_chat_history(event.chat_id, 0, "Kabir", "[Sent Account Sticker]")  
                 return  
 
+        # Strict Single Request Call
         ai_reply = await ask_kabir_ai(prompt)  
-        attempts = 0  
-        while (await check_repetition(event.chat_id, ai_reply)) and attempts < 2:  
-            ai_reply = await ask_kabir_ai(prompt + "\nSafety Warning: Change your phrasing structure entirely.")  
-            attempts += 1  
+        
+        # Checking and tracking repetition safely
+        is_repeated = await check_repetition(event.chat_id, ai_reply)
+        if is_repeated:
+            ai_reply = "Arre bhai bhai, abhi toh bola ye! Kuch naya puch."
 
-        if random.random() < 0.40 and ai_reply and "?" not in ai_reply:  
+        if random.random() < 0.40 and ai_reply and "?" not in ai_reply and "temporarily unavailable" not in ai_reply and not is_repeated:  
             if user_data["last_topic"]:  
                 chosen_question = f" Waise, tu us baare me bol raha tha na: '{user_data['last_topic']}'? Uska kya scene bana?"  
             else:  
@@ -406,4 +417,3 @@ if __name__ == "__main__":
         asyncio.run(main())
     except KeyboardInterrupt:
         print("Bot stopped")
-                
