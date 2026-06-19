@@ -280,7 +280,6 @@ safe_text = re.sub(r"ignore|system prompt|developer|override", "", raw_text, fla
     clean_text = re.sub(r'[^\x00-\x7F\u0900-\u097F]', '', safe_text)  
     text = clean_text[:500]  
 
-    # ⚠️ FIX 1: EVENT INCOMING SIGNAL LOGGER  
     print(f"MESSAGE RECEIVED: {text}")  
 
     now = asyncio.get_event_loop().time()  
@@ -376,7 +375,7 @@ safe_text = re.sub(r"ignore|system prompt|developer|override", "", raw_text, fla
 except Exception as e:  
     logger.error(f"Global handler intercept crash avoided: {e}")
 
-=== 🔴 MAIN CONFIGURATION LIFECYCLE (YOUR FIXED BLOCK FULLY BOUND) ===
+=== 🔴 MAIN CONFIGURATION LIFECYCLE ===
 
 def handle_sigterm(sig, frame):
 print("SIGTERM RECEIVED")
