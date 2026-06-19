@@ -14,7 +14,7 @@ from telethon.sessions import StringSession
 from telethon.tl.functions.messages import GetAllStickersRequest, GetStickerSetRequest
 from telethon.tl.types import InputStickerSetID
 
-=== 🧪 DEBUG MODE INITIALIZATION CHECK ===
+=== DEBUG MODE INITIALIZATION CHECK ===
 
 print("=== [STARTUP] CHECKING ENVIRONMENT VARIABLES ===")
 try:
@@ -375,7 +375,7 @@ safe_text = re.sub(r"ignore|system prompt|developer|override", "", raw_text, fla
 except Exception as e:  
     logger.error(f"Global handler intercept crash avoided: {e}")
 
-=== 🔴 MAIN CONFIGURATION LIFECYCLE ===
+=== MAIN CONFIGURATION LIFECYCLE ===
 
 def handle_sigterm(sig, frame):
 print("SIGTERM RECEIVED")
