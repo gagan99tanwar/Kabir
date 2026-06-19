@@ -4,7 +4,7 @@ import sys
 import random
 import asyncio
 import logging
-import aiosqlite  # Replacing standard sqlite3 for true async performance
+import aiosqlite  
 import aiohttp
 import signal
 import traceback
@@ -39,7 +39,9 @@ except Exception as e:
 GEMINI_KEYS = [os.getenv("GEMINI_KEY_1"), os.getenv("GEMINI_KEY_2"), os.getenv("GEMINI_KEY")]
 GEMINI_KEYS = [k for k in GEMINI_KEYS if k]  
 current_key_index = 0
-GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent"
+
+# Fix 1: Temporarily downgraded to 1.5 Flash for better free-tier rate limits
+GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent"
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
@@ -90,7 +92,6 @@ async def update_user_stats(user_id, updates):
     async with DB_LOCK:
         async with aiosqlite.connect(DB_NAME, timeout=10) as db:
             for key, value in updates.items():
-                # Fix: Added trust_score so it doesn't get silently ignored
                 if key in ["nickname", "likes", "dislikes", "enemy_score", "friend_level", "current_mood", "last_curiosity", "last_topic", "trust_score"]:
                     await db.execute(f"UPDATE users SET {key} = ? WHERE user_id = ?", (value, user_id))
             await db.commit()
@@ -113,7 +114,6 @@ async def save_chat_history(chat_id, user_id, role, text):
         async with aiosqlite.connect(DB_NAME, timeout=10) as db:
             await db.execute('INSERT INTO chat_history (chat_id, user_id, role, text) VALUES (?, ?, ?, ?)', (chat_id, user_id, role, text))
             if random.random() < 0.10:
-                # Fix: Safe SQLite cleanup approach using LIMIT offset safely
                 await db.execute('''DELETE FROM chat_history WHERE chat_id = ? AND id <= (SELECT id FROM chat_history WHERE chat_id = ? ORDER BY id DESC LIMIT 1 OFFSET 30)''', (chat_id, chat_id))  
             await db.commit()
 
@@ -155,7 +155,6 @@ async def process_dynamic_learning(text, user_data):
             
     if "pasand hai" in text_lower or "love" in text_lower:  
         cleaned_like = text_lower.replace("mujhe", "").replace("pasand hai", "").replace("love", "").strip()  
-        # Fix: Split into list to avoid substring 'cri' matching 'cricket'
         existing_likes = [l.strip().lower() for l in user_data["likes"].split(",") if l.strip()]
         if cleaned_like and cleaned_like not in existing_likes:  
             updates["likes"] = f"{user_data['likes']}, {cleaned_like}".strip(", ")  
@@ -212,6 +211,11 @@ async def ask_kabir_ai(prompt):
                 print(f"=== [GEMINI HTTP CHECK] ATTEMPT {attempt+1} ===")
                 print("STATUS:", resp.status)
                 
+                # Fix 2: Detailed error logging for any non-200 status
+                if resp.status != 200:
+                    error_text = await resp.text()
+                    print("GEMINI ERROR BODY:", error_text)
+                
                 if resp.status == 429:
                     print("⚠️ RATE LIMITED ON KEY:", api_key[:10])
                     await asyncio.sleep(0.3)  
@@ -225,7 +229,6 @@ async def ask_kabir_ai(prompt):
                     continue
 
                 data = await resp.json()
-                # Fix: Check safely for Gemini safety blocks & empty keys avoiding KeyError
                 if not data or not data.get("candidates"):
                     print("⚠️ Safety blocked or empty response by Gemini.")
                     continue
@@ -294,7 +297,6 @@ async def handle_new_message(event):
 
         user_id = event.sender_id
         if user_id:
-            # Fix: Cooldown reduced from 3.0 to 1.0 seconds so normal fast chats aren't ignored
             if user_id in USER_COOLDOWN and (now - USER_COOLDOWN[user_id]) < 1.0: return  
             USER_COOLDOWN[user_id] = now
 
