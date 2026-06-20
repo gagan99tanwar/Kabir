@@ -622,3 +622,182 @@ async def message_handler(event):
     except Exception as e:
         logger.exception(f"Handler error: {e}")
 
+# ============================================================
+# ADMIN COMMANDS
+# ============================================================
+
+async def admin_commands(event, text, user):
+    global ACTIVE_MODE
+
+    if event.sender_id != ADMIN_ID:
+        return False
+
+    if text == ".stats":
+        await event.reply(
+            f"📊 Kabir Stats\n"
+            f"Users cached: {len(USER_CACHE)}\n"
+            f"Queue: {MESSAGE_QUEUE.qsize()}\n"
+            f"Uptime: {int(time.time() - START_TIME)}s"
+        )
+        return True
+
+    if text.startswith(".mode"):
+        parts = text.split()
+        if len(parts) < 2:
+            await event.reply("Modes: " + ", ".join(PERSONALITY_MODES))
+            return True
+
+        mode = parts[1].lower()
+        if mode in PERSONALITY_MODES:
+            ACTIVE_MODE = mode
+            await event.reply(f"✅ Mode changed: {mode}")
+        else:
+            await event.reply("Modes: " + ", ".join(PERSONALITY_MODES))
+        return True
+
+    if text == ".profile":
+        await event.reply(
+            f"👤 Profile\n"
+            f"Name: {user.get('nickname') or 'N/A'}\n"
+            f"XP: {user.get('friend_level', 0)}\n"
+            f"City: {user.get('city') or 'N/A'}\n"
+            f"Mood: {user.get('mood', 'normal')}"
+        )
+        return True
+
+    return False
+
+# ============================================================
+# BACKGROUND TASKS
+# ============================================================
+
+async def health_monitor():
+    while not SHUTDOWN_EVENT.is_set():
+        await asyncio.sleep(60)
+
+        cleanup_rate_limiter()
+
+        logger.info(
+            f"[Health] Queue={MESSAGE_QUEUE.qsize()} "
+            f"FailedKeys={len(KEY_FAILURES)} "
+            f"Uptime={int(time.time() - START_TIME)}s"
+        )
+
+
+async def backup_task():
+    while not SHUTDOWN_EVENT.is_set():
+        await asyncio.sleep(86400)
+        try:
+            stamp = time.time_ns()
+            # WAL mode keeps uncommitted data in -wal / -shm side files.
+            # Copying only the main .db file can produce an incomplete
+            # backup, so checkpoint first, then copy all three files.
+            async with DB_LOCK:
+                db = await get_db()
+                await db.execute("PRAGMA wal_checkpoint(FULL)")
+                await db.commit()
+
+            for suffix in ("", "-wal", "-shm"):
+                src = DB_NAME + suffix
+                if os.path.exists(src):
+                    shutil.copy2(src, f"backup_{stamp}{suffix}.db" if suffix == "" else f"backup_{stamp}.db{suffix}")
+
+            logger.info("✅ Backup complete")
+        except Exception as e:
+            logger.warning(f"Backup error: {e}")
+
+# ============================================================
+# SAFE SHUTDOWN
+# ============================================================
+
+async def shutdown():
+    if SHUTDOWN_EVENT.is_set():
+        return
+    SHUTDOWN_EVENT.set()
+
+    logger.info("🛑 Shutting down...")
+
+    if _HTTP_SESSION and not _HTTP_SESSION.closed:
+        await _HTTP_SESSION.close()
+
+    await close_db()
+
+    try:
+        await client.disconnect()
+    except Exception:
+        pass
+
+
+def signal_handler(*_):
+    asyncio.create_task(shutdown())
+
+# ============================================================
+# STARTUP
+# ============================================================
+
+async def startup():
+    logger.info("🚀 Starting Kabir...")
+
+    await init_db()
+
+    for _ in range(WORKER_COUNT):
+        asyncio.create_task(worker())
+
+    asyncio.create_task(health_monitor())
+    asyncio.create_task(backup_task())
+
+    logger.info("✅ Kabir systems online")
+
+# ============================================================
+# MAIN
+# ============================================================
+
+def validate_config():
+    missing = []
+    if not API_ID:
+        missing.append("API_ID")
+    if not API_HASH:
+        missing.append("API_HASH")
+    if not STRING_SESSION:
+        missing.append("STRING_SESSION")
+    if not GEMINI_KEYS:
+        missing.append("GEMINI_KEY_1..9")
+    if missing:
+        raise RuntimeError("Missing config: " + ", ".join(missing))
+
+
+async def main():
+    loop = asyncio.get_running_loop()
+    try:
+        loop.add_signal_handler(signal.SIGINT, signal_handler)
+        loop.add_signal_handler(signal.SIGTERM, signal_handler)
+    except NotImplementedError:
+        # add_signal_handler isn't supported on Windows
+        signal.signal(signal.SIGINT, signal_handler)
+        signal.signal(signal.SIGTERM, signal_handler)
+
+    try:
+        await client.start()
+        me = await client.get_me()
+        logger.info(f"✅ Telegram connected as {me.first_name} (id={me.id})")
+
+        await startup()
+
+        logger.info("🤖 Kabir is online")
+        await client.run_until_disconnected()
+
+    except Exception as e:
+        logger.exception(f"Fatal error: {e}")
+    finally:
+        await shutdown()
+
+
+if __name__ == "__main__":
+    try:
+        validate_config()
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        print("Stopped")
+    except Exception as e:
+        logger.exception(f"Boot failed: {e}")
+            
