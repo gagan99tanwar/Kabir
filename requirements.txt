@@ -2,3 +2,4 @@ telethon
 aiohttp
 aiosqlite
 requests
+cachetools
