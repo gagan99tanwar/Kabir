@@ -1,24 +1,3 @@
-"""
-Kabir Telegram AI Userbot - Fixed & Completed
-
-Required packages:
-    pip install telethon aiohttp aiosqlite cachetools
-
-Required environment variables:
-    API_ID          - Telegram API ID
-    API_HASH        - Telegram API Hash
-    STRING_SESSION  - Telethon string session
-    GEMINI_KEY_1..9 - One or more Gemini API keys
-    ADMIN_ID        - Your Telegram numeric user ID
-
-Optional environment variables:
-    OPENROUTER_KEY  - fallback model key if all Gemini keys fail
-    GEMINI_MODEL    - defaults to gemini-2.0-flash
-    GEMINI_TEMPERATURE - defaults to 1.25
-    GEMINI_TOP_P    - defaults to 0.98
-    GEMINI_MAX_TOKENS - defaults to 800
-"""
-
 import os
 import re
 import sys
