@@ -1,27 +1,3 @@
-"""
-Kabir Telegram AI Userbot - Fixed & Completed
-
-Required packages:
-    pip install telethon aiohttp aiosqlite cachetools
-
-Required environment variables:
-    API_ID          - Telegram API ID
-    API_HASH        - Telegram API Hash
-    STRING_SESSION  - Telethon string session
-    GEMINI_KEY_1..9 - One or more Gemini API keys
-    ADMIN_ID        - Your Telegram numeric user ID
-
-Optional environment variables:
-    OPENROUTER_KEY  - fallback model key if all Gemini keys fail
-    GEMINI_MODEL    - defaults to gemini-2.0-flash
-    GEMINI_TEMPERATURE - defaults to 1.25
-    GEMINI_TOP_P    - defaults to 0.98
-    GEMINI_MAX_TOKENS - defaults to 150 (enough for 1-3 full lines without cutting off)
-    MATURE_MODE     - true/false, defaults to false. When true, allows mild
-                      Hinglish gaali and flirty/romantic tone in 'gf' mode.
-                      Can also be toggled live with the .mature admin command.
-"""
-
 import os
 import re
 import sys
@@ -82,7 +58,7 @@ GEMINI_TOP_P = float(os.getenv("GEMINI_TOP_P", "0.98"))
 # Kept tight on purpose - this bot is supposed to text like a person, not
 # write essays. ~150 tokens is enough room for 1-3 real lines (with actual
 # content) without the API cutting the answer off mid-sentence.
-GEMINI_MAX_TOKENS = int(os.getenv("GEMINI_MAX_TOKENS", "150"))
+GEMINI_MAX_TOKENS = int(os.getenv("GEMINI_MAX_TOKENS", "450"))
 
 if not API_ID or not API_HASH or not STRING_SESSION:
     sys.exit("❌ Telegram config missing (API_ID / API_HASH / STRING_SESSION)")
