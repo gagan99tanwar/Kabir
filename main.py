@@ -46,7 +46,7 @@ RATE_LIMIT_PER_MIN = int(os.getenv("RATE_LIMIT_PER_MIN", "10"))
 STICKER_DIR        = os.getenv("STICKER_DIR", "stickers").strip()
 GEMINI_TEMPERATURE = float(os.getenv("GEMINI_TEMPERATURE", "1.25"))
 GEMINI_TOP_P       = float(os.getenv("GEMINI_TOP_P", "0.98"))
-GEMINI_MAX_TOKENS  = int(os.getenv("GEMINI_MAX_TOKENS", "150"))
+GEMINI_MAX_TOKENS  = int(os.getenv("GEMINI_MAX_TOKENS", "450"))
 MATURE_MODE        = os.getenv("MATURE_MODE", "false").strip().lower() == "true"
 
 if not API_ID or not API_HASH or not STRING_SESSION:
