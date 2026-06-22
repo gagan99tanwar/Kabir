@@ -1022,7 +1022,7 @@ async def message_handler(event):
         if uid in BANNED_USERS:
             return
 
-        if PRIVATE_ONLY and not event.is_private:
+        if event.is_private:
             return
 
         # Group trigger check
